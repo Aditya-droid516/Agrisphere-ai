@@ -324,49 +324,47 @@ def fertiliser_plan(crop: str, n: float, p: float, k: float, acres: float) -> di
 
 
 def soil_health(n, p, k, ph, oc, ec) -> tuple[int, dict]:
-    # 1. Calculate individual metric scores (0 to 100)
-    n_score = min(100.0, max(0.0, (n / 250.0) * 100.0))
-    p_score = min(100.0, max(0.0, (p / 50.0) * 100.0))
-    k_score = min(100.0, max(0.0, (k / 150.0) * 100.0))
-    
-    # pH: 6.0-7.5 is perfect. < 4.0 or > 9.0 is toxic (0 points)
+    # Helper function to score based on agronomic Low/Medium/High thresholds
+    def get_agronomic_score(value, low, high):
+        if value < low:
+            return (value / low) * 40.0  # 0 to 40 points for Low
+        elif value <= high:
+            return 40.0 + ((value - low) / (high - low)) * 40.0  # 40 to 80 points for Medium
+        else:
+            return min(100.0, 80.0 + ((value - high) / high) * 20.0)  # 80 to 100 points for High
+
+    # Apply to each metric
+    n_score = get_agronomic_score(n, 280, 560)   # N: Low <280, High >560
+    p_score = get_agronomic_score(p, 10, 25)     # P: Low <10, High >25
+    k_score = get_agronomic_score(k, 108, 280)   # K: Low <108, High >280
+    oc_score = get_agronomic_score(oc, 0.5, 0.75) # OC: Low <0.5, High >0.75
+    ec_score = 100.0 if 0.1 <= ec <= 1.5 else 50.0 # EC simple check
+
+    # pH remains the same (Toxic <4.0 or >9.0 is 0, 6.0-7.5 is 100)
     if ph < 4.0 or ph > 9.0:
         ph_score = 0.0
     elif 6.0 <= ph <= 7.5:
         ph_score = 100.0
     else:
         ph_score = max(0.0, 100.0 - (abs(ph - 6.75) / 2.75) * 100.0)
-        
-    # Organic Carbon: 0% is dead. 2%+ is excellent.
-    oc_score = min(100.0, max(0.0, (oc / 2.0) * 100.0))
-    
-    # EC: < 0.1 is inert (0 points). > 4.0 is saline (0 points). 0.5-1.5 is optimal.
-    if ec < 0.1 or ec > 4.0:
-        ec_score = 0.0
-    elif 0.5 <= ec <= 1.5:
-        ec_score = 100.0
-    else:
-        ec_score = 50.0
 
-    # 2. Weighted Average
+    # --- Keep the rest of the function exactly the same ---
     base_score = (
         (n_score * 0.15) + (p_score * 0.15) + (k_score * 0.15) +
         (ph_score * 0.20) + (oc_score * 0.20) + (ec_score * 0.15)
     )
 
-    # 3. Liebig's Law of the Minimum (The Fix)
     min_score = min(n_score, p_score, k_score, ph_score, oc_score, ec_score)
     
     if min_score < 20.0:
-        final_score = min_score  # If one thing is terrible, the whole soil is terrible
+        final_score = min_score
     else:
         final_score = base_score * (min_score / 100.0)
 
-    # 4. Keep the rating structure so the UI doesn't crash
     rating = {
-        "N": "Low" if n_score < 50 else "Medium" if n_score <= 80 else "High",
-        "P": "Low" if p_score < 50 else "Medium" if p_score <= 80 else "High",
-        "K": "Low" if k_score < 50 else "Medium" if k_score <= 80 else "High",
+        "N": "Low" if n < 280 else "Medium" if n <= 560 else "High",
+        "P": "Low" if p < 10 else "Medium" if p <= 25 else "High",
+        "K": "Low" if k < 108 else "Medium" if k <= 280 else "High",
     }
 
     parts = {"Nitrogen": n_score, "Phosphorus": p_score, "Potassium": k_score,
