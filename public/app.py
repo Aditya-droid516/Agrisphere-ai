@@ -324,41 +324,94 @@ def fertiliser_plan(crop: str, n: float, p: float, k: float, acres: float) -> di
 
 
 def soil_health(n, p, k, ph, oc, ec) -> tuple[int, dict]:
-    pts = {"Low": 40, "Medium": 75, "High": 100}
-    rating = nutrient_rating(n, p, k)
-    ph_s = 100 if 6.5 <= ph <= 7.5 else 80 if 6.0 <= ph <= 8.0 else 55 if 5.5 <= ph <= 8.5 else 30
-    oc_s = 40 if oc < 0.5 else 75 if oc <= 0.75 else 100
-    ec_s = 100 if ec < 1 else 70 if ec <= 2 else 40
-    score = (0.2 * pts[rating["N"]] + 0.15 * pts[rating["P"]] + 0.15 * pts[rating["K"]]
-             + 0.2 * ph_s + 0.2 * oc_s + 0.1 * ec_s)
-    parts = {"Nitrogen": pts[rating["N"]], "Phosphorus": pts[rating["P"]], "Potassium": pts[rating["K"]],
-             "pH balance": ph_s, "Organic carbon": oc_s, "Salinity (EC)": ec_s}
-    return round(score), {"rating": rating, "parts": parts}
+    # 1. Calculate individual metric scores (0 to 100)
+    n_score = min(100.0, max(0.0, (n / 250.0) * 100.0))
+    p_score = min(100.0, max(0.0, (p / 50.0) * 100.0))
+    k_score = min(100.0, max(0.0, (k / 150.0) * 100.0))
+    
+    # pH: 6.0-7.5 is perfect. < 4.0 or > 9.0 is toxic (0 points)
+    if ph < 4.0 or ph > 9.0:
+        ph_score = 0.0
+    elif 6.0 <= ph <= 7.5:
+        ph_score = 100.0
+    else:
+        ph_score = max(0.0, 100.0 - (abs(ph - 6.75) / 2.75) * 100.0)
+        
+    # Organic Carbon: 0% is dead. 2%+ is excellent.
+    oc_score = min(100.0, max(0.0, (oc / 2.0) * 100.0))
+    
+    # EC: < 0.1 is inert (0 points). > 4.0 is saline (0 points). 0.5-1.5 is optimal.
+    if ec < 0.1 or ec > 4.0:
+        ec_score = 0.0
+    elif 0.5 <= ec <= 1.5:
+        ec_score = 100.0
+    else:
+        ec_score = 50.0
+
+    # 2. Weighted Average
+    base_score = (
+        (n_score * 0.15) + (p_score * 0.15) + (k_score * 0.15) +
+        (ph_score * 0.20) + (oc_score * 0.20) + (ec_score * 0.15)
+    )
+
+    # 3. Liebig's Law of the Minimum (The Fix)
+    min_score = min(n_score, p_score, k_score, ph_score, oc_score, ec_score)
+    
+    if min_score < 20.0:
+        final_score = min_score  # If one thing is terrible, the whole soil is terrible
+    else:
+        final_score = base_score * (min_score / 100.0)
+
+    # 4. Keep the rating structure so the UI doesn't crash
+    rating = {
+        "N": "Low" if n_score < 50 else "Medium" if n_score <= 80 else "High",
+        "P": "Low" if p_score < 50 else "Medium" if p_score <= 80 else "High",
+        "K": "Low" if k_score < 50 else "Medium" if k_score <= 80 else "High",
+    }
+
+    parts = {"Nitrogen": n_score, "Phosphorus": p_score, "Potassium": k_score,
+             "pH balance": ph_score, "Organic carbon": oc_score, "Salinity (EC)": ec_score}
+             
+    return round(final_score), {"rating": rating, "parts": parts}
 
 
 def soil_actions(n, p, k, ph, oc, ec) -> list[str]:
     r = nutrient_rating(n, p, k)
     out = []
-    if ph < 5.5:
+    
+    # Critical warnings first
+    if ph < 4.0:
+        out.append("**CRITICAL: Extremely acidic soil (pH < 4.0).** This is toxic to almost all crops. Heavy application of agricultural lime and organic matter is required immediately.")
+    elif ph < 5.5:
         out.append("**Acidic soil:** apply agricultural lime (dose from a lab test) and prefer acid-tolerant crops.")
     elif ph < 6.0:
         out.append("**Slightly acidic:** light liming or organic matter helps; monitor pH each season.")
+    elif ph > 9.0:
+        out.append("**CRITICAL: Extremely alkaline/sodic soil (pH > 9.0).** Nutrients are completely locked out. Heavy gypsum and organic matter application required.")
     elif ph > 8.5:
         out.append("**Strongly alkaline / sodic risk:** apply gypsum, add organic matter, use good-quality irrigation water.")
     elif ph > 8.0:
         out.append("**Alkaline:** add organic matter / green manure; prefer ammonium-based nitrogen sources.")
-    if oc < 0.5:
+        
+    if oc == 0.0:
+        out.append("**CRITICAL: Zero Organic Carbon.** The soil is biologically dead (inert). Add massive amounts of compost/FYM (10+ t/ha) to restart soil life.")
+    elif oc < 0.5:
         out.append("**Low organic carbon:** add 4–5 t/ha FYM or compost, use green manure and retain crop residue.")
     elif oc <= 0.75:
         out.append("**Medium organic carbon:** keep adding compost/FYM to move towards > 0.75%.")
-    if ec > 2:
+        
+    if ec == 0.0:
+        out.append("**CRITICAL: Zero Electrical Conductivity.** There are absolutely no dissolved nutrients in the soil water. A complete NPK + micronutrient fertilizer program must be started.")
+    elif ec > 2:
         out.append("**High salinity:** improve drainage, leach with good water, choose salt-tolerant crops.")
+        
     if r["N"] == "Low":
         out.append("**Low nitrogen:** use split urea doses, add compost, and include legumes in rotation.")
     if r["P"] == "Low":
         out.append("**Low phosphorus:** apply DAP/SSP at sowing; consider phosphate-solubilising bacteria (PSB).")
     if r["K"] == "Low":
         out.append("**Low potassium:** apply MOP; especially important for potato, cotton and sugarcane.")
+        
     if not out:
         out.append("**Soil looks well balanced.** Maintain with regular organic matter and a soil test every 2 years.")
     return out
