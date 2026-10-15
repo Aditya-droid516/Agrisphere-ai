@@ -326,21 +326,22 @@ def fertiliser_plan(crop: str, n: float, p: float, k: float, acres: float) -> di
 def soil_health(n, p, k, ph, oc, ec) -> tuple[int, dict]:
     # Helper function to score based on agronomic Low/Medium/High thresholds
     def get_agronomic_score(value, low, high):
+        if value <= 0: return 0.0
         if value < low:
-            return (value / low) * 40.0  # 0 to 40 points for Low
+            return (value / low) * 50.0  # 0 to 50 points for Low
         elif value <= high:
-            return 40.0 + ((value - low) / (high - low)) * 40.0  # 40 to 80 points for Medium
+            return 50.0 + ((value - low) / (high - low)) * 35.0  # 50 to 85 points for Medium
         else:
-            return min(100.0, 80.0 + ((value - high) / high) * 20.0)  # 80 to 100 points for High
+            return min(100.0, 85.0 + ((value - high) / high) * 15.0)  # 85 to 100 points for High
 
     # Apply to each metric
-    n_score = get_agronomic_score(n, 280, 560)   # N: Low <280, High >560
-    p_score = get_agronomic_score(p, 10, 25)     # P: Low <10, High >25
-    k_score = get_agronomic_score(k, 108, 280)   # K: Low <108, High >280
-    oc_score = get_agronomic_score(oc, 0.5, 0.75) # OC: Low <0.5, High >0.75
+    n_score = get_agronomic_score(n, 280, 560)
+    p_score = get_agronomic_score(p, 10, 25)
+    k_score = get_agronomic_score(k, 108, 280)
+    oc_score = get_agronomic_score(oc, 0.5, 0.75)
     ec_score = 100.0 if 0.1 <= ec <= 1.5 else 50.0 # EC simple check
 
-    # pH remains the same (Toxic <4.0 or >9.0 is 0, 6.0-7.5 is 100)
+    # pH: Toxic <4.0 or >9.0 is 0, 6.0-7.5 is 100
     if ph < 4.0 or ph > 9.0:
         ph_score = 0.0
     elif 6.0 <= ph <= 7.5:
@@ -348,18 +349,20 @@ def soil_health(n, p, k, ph, oc, ec) -> tuple[int, dict]:
     else:
         ph_score = max(0.0, 100.0 - (abs(ph - 6.75) / 2.75) * 100.0)
 
-    # --- Keep the rest of the function exactly the same ---
+    # Weighted Average
     base_score = (
         (n_score * 0.15) + (p_score * 0.15) + (k_score * 0.15) +
         (ph_score * 0.20) + (oc_score * 0.20) + (ec_score * 0.15)
     )
 
+    # Liebig's Law of the Minimum (Revised)
     min_score = min(n_score, p_score, k_score, ph_score, oc_score, ec_score)
     
-    if min_score < 20.0:
+    # Only apply a hard penalty if something is critically bad (below 40 points)
+    if min_score < 40.0:
         final_score = min_score
     else:
-        final_score = base_score * (min_score / 100.0)
+        final_score = base_score
 
     rating = {
         "N": "Low" if n < 280 else "Medium" if n <= 560 else "High",
